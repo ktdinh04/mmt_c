@@ -33,16 +33,33 @@ target_include_directories(common PUBLIC
 )
 
 # Server
+set(SERVER_BUILT FALSE)
 if(BUILD_SERVER)
     message(STATUS "Building Chat Server...")
 
-    # Find SQLite3
+    # Find SQLite3 - multiple methods
     find_package(SQLite3 QUIET)
+
     if(NOT SQLite3_FOUND)
         # Try pkg-config
-        find_package(PkgConfig)
+        find_package(PkgConfig QUIET)
         if(PkgConfig_FOUND)
-            pkg_check_modules(SQLITE3 sqlite3)
+            pkg_check_modules(SQLITE3 QUIET sqlite3)
+        endif()
+    endif()
+
+    # Try to find sqlite3 header directly
+    if(NOT SQLite3_FOUND AND NOT SQLITE3_FOUND)
+        find_path(SQLITE3_INCLUDE_DIR sqlite3.h
+            PATHS /usr/include /usr/local/include
+        )
+        find_library(SQLITE3_LIBRARY sqlite3
+            PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+        )
+        if(SQLITE3_INCLUDE_DIR AND SQLITE3_LIBRARY)
+            set(SQLITE3_FOUND TRUE)
+            set(SQLITE3_INCLUDE_DIRS ${SQLITE3_INCLUDE_DIR})
+            set(SQLITE3_LIBRARIES ${SQLITE3_LIBRARY})
         endif()
     endif()
 
@@ -70,9 +87,7 @@ if(BUILD_SERVER)
             target_link_libraries(chat_server ${SQLITE3_LIBRARIES})
         endif()
 
-        # Also try to link sqlite3 directly if the above doesn't work
-        target_link_libraries(chat_server sqlite3)
-
+        set(SERVER_BUILT TRUE)
         message(STATUS "Chat Server will be built")
     else()
         message(WARNING "SQLite3 not found. Server will not be built.")
@@ -81,6 +96,7 @@ if(BUILD_SERVER)
 endif()
 
 # Client
+set(CLIENT_BUILT FALSE)
 if(BUILD_CLIENT)
     message(STATUS "Building Chat Client...")
 
@@ -119,19 +135,22 @@ if(BUILD_CLIENT)
             ${PLATFORM_LIBS}
         )
 
+        set(CLIENT_BUILT TRUE)
         message(STATUS "Chat Client will be built with Qt${QT_VERSION}")
     else()
         message(WARNING "Qt5 or Qt6 not found. Client will not be built.")
-        message(WARNING "Install Qt: sudo apt install qt5-default qtbase5-dev (Ubuntu/Debian)")
-        message(WARNING "         or: sudo apt install qt6-base-dev (Ubuntu 22.04+)")
+        message(WARNING "Install Qt5: sudo apt install qtbase5-dev (Ubuntu/Debian)")
+        message(WARNING "Install Qt6: sudo apt install qt6-base-dev (Ubuntu 22.04+)")
     endif()
 endif()
 
-# Installation
-install(TARGETS chat_server chat_client
-    RUNTIME DESTINATION bin
-    OPTIONAL
-)
+# Installation (only for targets that exist)
+if(SERVER_BUILT)
+    install(TARGETS chat_server RUNTIME DESTINATION bin)
+endif()
+if(CLIENT_BUILT)
+    install(TARGETS chat_client RUNTIME DESTINATION bin)
+endif()
 
 # Print summary
 message(STATUS "")
