@@ -160,6 +160,9 @@ Message createUserStatusMessage(const std::string& username, UserStatus status) 
 }
 
 // MessageBuffer implementation
+// Maximum message size: 1MB (to prevent memory issues with malformed data)
+static const uint32_t MAX_MESSAGE_SIZE = 1024 * 1024;
+
 MessageBuffer::MessageBuffer() {}
 
 void MessageBuffer::append(const uint8_t* data, size_t length) {
@@ -178,12 +181,18 @@ bool MessageBuffer::hasCompleteMessage() const {
                       (static_cast<uint32_t>(buffer_[2]) << 8) |
                       static_cast<uint32_t>(buffer_[3]);
 
+    // Validate message length to prevent overflow and memory issues
+    if (length > MAX_MESSAGE_SIZE) {
+        return false;  // Invalid message, will be handled in extractMessage
+    }
+
     // Check if we have complete message
-    return buffer_.size() >= (4 + length);
+    return buffer_.size() >= (4 + static_cast<size_t>(length));
 }
 
 Message MessageBuffer::extractMessage() {
-    if (!hasCompleteMessage()) {
+    // Need at least 4 bytes for length prefix
+    if (buffer_.size() < 4) {
         return Message(MessageType::ERROR);
     }
 
@@ -193,11 +202,25 @@ Message MessageBuffer::extractMessage() {
                       (static_cast<uint32_t>(buffer_[2]) << 8) |
                       static_cast<uint32_t>(buffer_[3]);
 
+    // Validate message length
+    if (length > MAX_MESSAGE_SIZE) {
+        // Invalid message - clear buffer and return error
+        buffer_.clear();
+        Message msg(MessageType::ERROR);
+        msg.content = "Message too large or invalid";
+        return msg;
+    }
+
+    // Check if we have the complete message
+    if (buffer_.size() < 4 + static_cast<size_t>(length)) {
+        return Message(MessageType::ERROR);
+    }
+
     // Parse message
     Message msg = deserialize(buffer_.data() + 4, length);
 
     // Remove processed data from buffer
-    buffer_.erase(buffer_.begin(), buffer_.begin() + 4 + length);
+    buffer_.erase(buffer_.begin(), buffer_.begin() + 4 + static_cast<ptrdiff_t>(length));
 
     return msg;
 }

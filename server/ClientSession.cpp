@@ -94,85 +94,94 @@ void ClientSession::processData(const uint8_t* data, size_t length) {
 }
 
 void ClientSession::handleMessage(const Protocol::Message& msg) {
-    server_->log("[" + address_ + "] Received: " + Protocol::messageTypeToString(msg.type));
+    try {
+        server_->log("[" + address_ + "] Received: " + Protocol::messageTypeToString(msg.type));
 
-    switch (msg.type) {
-        case Protocol::MessageType::REGISTER:
-            handleRegister(msg);
-            break;
+        switch (msg.type) {
+            case Protocol::MessageType::REGISTER:
+                handleRegister(msg);
+                break;
 
-        case Protocol::MessageType::LOGIN:
-            handleLogin(msg);
-            break;
+            case Protocol::MessageType::LOGIN:
+                handleLogin(msg);
+                break;
 
-        case Protocol::MessageType::LOGOUT:
-            handleLogout(msg);
-            break;
+            case Protocol::MessageType::LOGOUT:
+                handleLogout(msg);
+                break;
 
-        case Protocol::MessageType::CHANGE_PASSWORD:
-            handleChangePassword(msg);
-            break;
+            case Protocol::MessageType::CHANGE_PASSWORD:
+                handleChangePassword(msg);
+                break;
 
-        case Protocol::MessageType::MSG_GLOBAL:
-            handleGlobalMessage(msg);
-            break;
+            case Protocol::MessageType::MSG_GLOBAL:
+                handleGlobalMessage(msg);
+                break;
 
-        case Protocol::MessageType::MSG_PRIVATE:
-            handlePrivateMessage(msg);
-            break;
+            case Protocol::MessageType::MSG_PRIVATE:
+                handlePrivateMessage(msg);
+                break;
 
-        case Protocol::MessageType::PING:
-            sendMessage(Protocol::Message(Protocol::MessageType::PONG));
-            break;
+            case Protocol::MessageType::PING:
+                sendMessage(Protocol::Message(Protocol::MessageType::PONG));
+                break;
 
-        // Admin commands
-        case Protocol::MessageType::KICK_USER:
-            handleKickUser(msg);
-            break;
+            // Admin commands
+            case Protocol::MessageType::KICK_USER:
+                handleKickUser(msg);
+                break;
 
-        case Protocol::MessageType::BAN_USER:
-            handleBanUser(msg);
-            break;
+            case Protocol::MessageType::BAN_USER:
+                handleBanUser(msg);
+                break;
 
-        case Protocol::MessageType::UNBAN_USER:
-            handleUnbanUser(msg);
-            break;
+            case Protocol::MessageType::UNBAN_USER:
+                handleUnbanUser(msg);
+                break;
 
-        case Protocol::MessageType::MUTE_USER:
-            handleMuteUser(msg);
-            break;
+            case Protocol::MessageType::MUTE_USER:
+                handleMuteUser(msg);
+                break;
 
-        case Protocol::MessageType::UNMUTE_USER:
-            handleUnmuteUser(msg);
-            break;
+            case Protocol::MessageType::UNMUTE_USER:
+                handleUnmuteUser(msg);
+                break;
 
-        case Protocol::MessageType::PROMOTE_USER:
-            handlePromoteUser(msg);
-            break;
+            case Protocol::MessageType::PROMOTE_USER:
+                handlePromoteUser(msg);
+                break;
 
-        case Protocol::MessageType::DEMOTE_USER:
-            handleDemoteUser(msg);
-            break;
+            case Protocol::MessageType::DEMOTE_USER:
+                handleDemoteUser(msg);
+                break;
 
-        case Protocol::MessageType::GET_ALL_USERS:
-            handleGetAllUsers(msg);
-            break;
+            case Protocol::MessageType::GET_ALL_USERS:
+                handleGetAllUsers(msg);
+                break;
 
-        case Protocol::MessageType::GET_BANNED_LIST:
-            handleGetBannedList(msg);
-            break;
+            case Protocol::MessageType::GET_BANNED_LIST:
+                handleGetBannedList(msg);
+                break;
 
-        case Protocol::MessageType::GET_MUTED_LIST:
-            handleGetMutedList(msg);
-            break;
+            case Protocol::MessageType::GET_MUTED_LIST:
+                handleGetMutedList(msg);
+                break;
 
-        case Protocol::MessageType::USER_INFO:
-            handleUserInfo(msg);
-            break;
+            case Protocol::MessageType::USER_INFO:
+                handleUserInfo(msg);
+                break;
 
-        default:
-            sendMessage(Protocol::createErrorResponse("Unknown command"));
-            break;
+            default:
+                sendMessage(Protocol::createErrorResponse("Unknown command"));
+                break;
+        }
+    } catch (const std::exception& e) {
+        server_->log("[" + address_ + "] Error handling message: " + std::string(e.what()));
+        try {
+            sendMessage(Protocol::createErrorResponse("Internal server error"));
+        } catch (...) {}
+    } catch (...) {
+        server_->log("[" + address_ + "] Unknown error handling message");
     }
 }
 
@@ -206,8 +215,16 @@ void ClientSession::handleRegister(const Protocol::Message& msg) {
         } else {
             sendMessage(Protocol::createErrorResponse("Username already exists"));
         }
+    } catch (const json::exception& e) {
+        server_->log("JSON parse error in register: " + std::string(e.what()));
+        try {
+            sendMessage(Protocol::createErrorResponse("Invalid request format"));
+        } catch (...) {}
     } catch (const std::exception& e) {
-        sendMessage(Protocol::createErrorResponse("Invalid request format"));
+        server_->log("Error in register: " + std::string(e.what()));
+        try {
+            sendMessage(Protocol::createErrorResponse("Server error"));
+        } catch (...) {}
     }
 }
 
@@ -258,8 +275,16 @@ void ClientSession::handleLogin(const Protocol::Message& msg) {
         } else {
             sendMessage(Protocol::createErrorResponse("Invalid username or password"));
         }
+    } catch (const json::exception& e) {
+        server_->log("JSON parse error in login: " + std::string(e.what()));
+        try {
+            sendMessage(Protocol::createErrorResponse("Invalid request format"));
+        } catch (...) {}
     } catch (const std::exception& e) {
-        sendMessage(Protocol::createErrorResponse("Invalid request format"));
+        server_->log("Error in login: " + std::string(e.what()));
+        try {
+            sendMessage(Protocol::createErrorResponse("Server error"));
+        } catch (...) {}
     }
 }
 

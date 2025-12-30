@@ -228,16 +228,27 @@ void Server::handleClient(int socketFd, const std::string& address) {
         return;
     }
 
-    while (running_ && session->isActive()) {
-        ssize_t bytesRead = recv(socketFd, reinterpret_cast<char*>(buffer), BUFFER_SIZE, 0);
+    try {
+        while (running_ && session->isActive()) {
+            ssize_t bytesRead = recv(socketFd, reinterpret_cast<char*>(buffer), BUFFER_SIZE, 0);
 
-        if (bytesRead <= 0) {
-            // Connection closed or error
-            break;
+            if (bytesRead <= 0) {
+                // Connection closed or error
+                break;
+            }
+
+            // Process received data with exception handling
+            try {
+                session->processData(buffer, bytesRead);
+            } catch (const std::exception& e) {
+                log("Error processing data from " + address + ": " + e.what());
+                // Continue processing - don't disconnect on single message error
+            }
         }
-
-        // Process received data
-        session->processData(buffer, bytesRead);
+    } catch (const std::exception& e) {
+        log("Exception in client handler for " + address + ": " + e.what());
+    } catch (...) {
+        log("Unknown exception in client handler for " + address);
     }
 
     // Client disconnected
