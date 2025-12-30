@@ -7,8 +7,19 @@
 #define DATABASE_H
 
 #include <string>
+#include <vector>
 #include <mutex>
 #include <sqlite3.h>
+
+// User info structure
+struct UserInfo {
+    std::string username;
+    std::string displayName;
+    int role;           // 0 = member, 1 = admin
+    bool isBanned;
+    bool isMuted;
+    std::string createdAt;
+};
 
 class Database {
 public:
@@ -83,6 +94,103 @@ public:
      * @return true if updated successfully
      */
     bool updateDisplayName(const std::string& username, const std::string& displayName);
+
+    // ========== Role Management ==========
+
+    /**
+     * @brief Get user's role
+     * @param username Username
+     * @return 0 = member, 1 = admin, -1 = not found
+     */
+    int getUserRole(const std::string& username);
+
+    /**
+     * @brief Check if user is admin
+     * @param username Username
+     * @return true if admin
+     */
+    bool isAdmin(const std::string& username);
+
+    /**
+     * @brief Set user's role
+     * @param username Username
+     * @param role 0 = member, 1 = admin
+     * @return true if successful
+     */
+    bool setUserRole(const std::string& username, int role);
+
+    // ========== Ban Management ==========
+
+    /**
+     * @brief Ban a user
+     * @param username Username to ban
+     * @return true if successful
+     */
+    bool banUser(const std::string& username);
+
+    /**
+     * @brief Unban a user
+     * @param username Username to unban
+     * @return true if successful
+     */
+    bool unbanUser(const std::string& username);
+
+    /**
+     * @brief Check if user is banned
+     * @param username Username
+     * @return true if banned
+     */
+    bool isBanned(const std::string& username);
+
+    /**
+     * @brief Get list of banned users
+     * @return Vector of banned usernames
+     */
+    std::vector<std::string> getBannedUsers();
+
+    // ========== Mute Management ==========
+
+    /**
+     * @brief Mute a user
+     * @param username Username to mute
+     * @return true if successful
+     */
+    bool muteUser(const std::string& username);
+
+    /**
+     * @brief Unmute a user
+     * @param username Username to unmute
+     * @return true if successful
+     */
+    bool unmuteUser(const std::string& username);
+
+    /**
+     * @brief Check if user is muted
+     * @param username Username
+     * @return true if muted
+     */
+    bool isMuted(const std::string& username);
+
+    /**
+     * @brief Get list of muted users
+     * @return Vector of muted usernames
+     */
+    std::vector<std::string> getMutedUsers();
+
+    // ========== User Info ==========
+
+    /**
+     * @brief Get user information
+     * @param username Username
+     * @return UserInfo struct
+     */
+    UserInfo getUserInfo(const std::string& username);
+
+    /**
+     * @brief Get all registered users
+     * @return Vector of UserInfo
+     */
+    std::vector<UserInfo> getAllUsers();
 
 private:
     Database();

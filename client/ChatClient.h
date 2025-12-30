@@ -43,10 +43,25 @@ public:
     bool isAuthenticated() const { return state_ == ConnectionState::Authenticated; }
     QString currentUsername() const { return username_; }
     QString currentDisplayName() const { return displayName_; }
+    bool isAdmin() const { return isAdmin_; }
+    bool isMuted() const { return isMuted_; }
 
     // Chat
     void sendGlobalMessage(const QString& content);
     void sendPrivateMessage(const QString& receiver, const QString& content);
+
+    // Admin commands
+    void kickUser(const QString& username);
+    void banUser(const QString& username);
+    void unbanUser(const QString& username);
+    void muteUser(const QString& username);
+    void unmuteUser(const QString& username);
+    void promoteUser(const QString& username);
+    void demoteUser(const QString& username);
+    void requestAllUsers();
+    void requestBannedList();
+    void requestMutedList();
+    void requestUserInfo(const QString& username);
 
 signals:
     // Connection signals
@@ -77,6 +92,18 @@ signals:
     // Error signals
     void errorReceived(const QString& error);
 
+    // Admin signals
+    void kicked(const QString& reason);
+    void banned(const QString& reason);
+    void muted(const QString& reason);
+    void unmuted(const QString& reason);
+    void allUsersReceived(const QVariantList& users);
+    void bannedListReceived(const QStringList& users);
+    void mutedListReceived(const QStringList& users);
+    void userInfoReceived(const QVariantMap& info);
+    void adminActionSuccess(const QString& message);
+    void adminActionFailed(const QString& error);
+
 private slots:
     void onConnected();
     void onDisconnected();
@@ -97,13 +124,16 @@ private:
     ConnectionState state_;
     QString username_;
     QString displayName_;
+    bool isAdmin_;
+    bool isMuted_;
 
     // Track pending operations
     enum class PendingOp {
         None,
         Login,
         Register,
-        ChangePassword
+        ChangePassword,
+        AdminAction
     };
     PendingOp pendingOp_;
 };

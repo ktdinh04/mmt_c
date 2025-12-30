@@ -106,6 +106,12 @@ public:
     void unregisterUser(const std::string& username);
 
     /**
+     * @brief Force disconnect a user (kick)
+     * @param username Username to kick
+     */
+    void kickUser(const std::string& username);
+
+    /**
      * @brief Log server event
      * @param event Event description
      */

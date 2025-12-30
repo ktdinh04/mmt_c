@@ -37,6 +37,25 @@ enum class MessageType {
     // User Management
     ONLINE_LIST = 20,
     USER_STATUS = 21,  // User online/offline notification
+    USER_INFO = 22,    // Get user information
+
+    // Member Management (Admin only)
+    KICK_USER = 30,    // Kick user from server
+    BAN_USER = 31,     // Ban user (cannot login)
+    UNBAN_USER = 32,   // Unban user
+    MUTE_USER = 33,    // Mute user (cannot send messages)
+    UNMUTE_USER = 34,  // Unmute user
+    PROMOTE_USER = 35, // Promote to admin
+    DEMOTE_USER = 36,  // Demote to member
+    GET_ALL_USERS = 37,// Get all registered users
+    GET_BANNED_LIST = 38, // Get banned users list
+    GET_MUTED_LIST = 39,  // Get muted users list
+
+    // Notifications
+    KICKED = 40,       // You have been kicked
+    BANNED = 41,       // You have been banned
+    MUTED = 42,        // You have been muted
+    UNMUTED = 43,      // You have been unmuted
 
     // Responses
     OK = 100,
@@ -45,6 +64,12 @@ enum class MessageType {
     // Heartbeat
     PING = 200,
     PONG = 201
+};
+
+// User Roles
+enum class UserRole {
+    MEMBER = 0,
+    ADMIN = 1
 };
 
 // User Status

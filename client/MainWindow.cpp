@@ -193,6 +193,14 @@ MainWindow::MainWindow(ChatClient* client, QWidget* parent)
     });
     connect(client_, &ChatClient::passwordChangeSuccess, this, &MainWindow::onPasswordChangeSuccess);
     connect(client_, &ChatClient::passwordChangeFailed, this, &MainWindow::onPasswordChangeFailed);
+
+    // Admin signals
+    connect(client_, &ChatClient::kicked, this, &MainWindow::onKicked);
+    connect(client_, &ChatClient::banned, this, &MainWindow::onBanned);
+    connect(client_, &ChatClient::muted, this, &MainWindow::onMuted);
+    connect(client_, &ChatClient::unmuted, this, &MainWindow::onUnmuted);
+    connect(client_, &ChatClient::adminActionSuccess, this, &MainWindow::onAdminActionSuccess);
+    connect(client_, &ChatClient::adminActionFailed, this, &MainWindow::onAdminActionFailed);
 }
 
 MainWindow::~MainWindow() {
@@ -268,7 +276,9 @@ void MainWindow::setupUI() {
         "QListWidget::item:hover { background-color: #e3f2fd; }"
         "QListWidget::item:selected { background-color: #bbdefb; }"
     );
+    userList_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(userList_, &QListWidget::itemDoubleClicked, this, &MainWindow::onUserDoubleClicked);
+    connect(userList_, &QListWidget::customContextMenuRequested, this, &MainWindow::onUserListContextMenu);
     rightLayout->addWidget(userList_);
 
     QLabel* hintLabel = new QLabel(tr("(Double-click để chat riêng)"), this);
@@ -525,4 +535,98 @@ ChatTab* MainWindow::findPrivateChatTab(const QString& username) {
         }
     }
     return nullptr;
+}
+
+// ========== Admin Functions ==========
+
+void MainWindow::onKicked(const QString& reason) {
+    QMessageBox::warning(this, tr("Bị đuổi"),
+        tr("Bạn đã bị đuổi khỏi server.\n%1").arg(reason));
+    emit loggedOut();
+}
+
+void MainWindow::onBanned(const QString& reason) {
+    QMessageBox::critical(this, tr("Bị cấm"),
+        tr("Tài khoản của bạn đã bị cấm.\n%1").arg(reason));
+    emit loggedOut();
+}
+
+void MainWindow::onMuted(const QString& reason) {
+    QMessageBox::warning(this, tr("Bị cấm chat"),
+        tr("Bạn đã bị cấm gửi tin nhắn.\n%1").arg(reason));
+    globalChatTab_->appendMessage(tr("Hệ thống"),
+        tr("Bạn đã bị cấm gửi tin nhắn"),
+        QDateTime::currentDateTime().toString("hh:mm:ss"), false);
+}
+
+void MainWindow::onUnmuted(const QString& reason) {
+    QMessageBox::information(this, tr("Được bỏ cấm chat"),
+        tr("Bạn đã được bỏ cấm gửi tin nhắn.\n%1").arg(reason));
+    globalChatTab_->appendMessage(tr("Hệ thống"),
+        tr("Bạn đã được bỏ cấm gửi tin nhắn"),
+        QDateTime::currentDateTime().toString("hh:mm:ss"), false);
+}
+
+void MainWindow::onAdminActionSuccess(const QString& message) {
+    QMessageBox::information(this, tr("Thành công"), message);
+}
+
+void MainWindow::onAdminActionFailed(const QString& error) {
+    QMessageBox::warning(this, tr("Lỗi"), error);
+}
+
+void MainWindow::onUserListContextMenu(const QPoint& pos) {
+    QListWidgetItem* item = userList_->itemAt(pos);
+    if (!item) return;
+
+    QString username = item->text();
+
+    QMenu menu(this);
+
+    // Chat action (always available)
+    QAction* chatAction = menu.addAction(tr("Chat riêng"));
+    connect(chatAction, &QAction::triggered, [this, username]() {
+        openPrivateChat(username);
+    });
+
+    // Admin actions (only if current user is admin)
+    if (client_->isAdmin()) {
+        menu.addSeparator();
+
+        QAction* kickAction = menu.addAction(tr("Kick (Đuổi)"));
+        connect(kickAction, &QAction::triggered, [this, username]() {
+            int result = QMessageBox::question(this, tr("Xác nhận"),
+                tr("Bạn có chắc muốn đuổi %1?").arg(username),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (result == QMessageBox::Yes) {
+                client_->kickUser(username);
+            }
+        });
+
+        QAction* banAction = menu.addAction(tr("Ban (Cấm)"));
+        connect(banAction, &QAction::triggered, [this, username]() {
+            int result = QMessageBox::question(this, tr("Xác nhận"),
+                tr("Bạn có chắc muốn cấm %1?\nUser sẽ không thể đăng nhập lại.").arg(username),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (result == QMessageBox::Yes) {
+                client_->banUser(username);
+            }
+        });
+
+        QAction* muteAction = menu.addAction(tr("Mute (Cấm chat)"));
+        connect(muteAction, &QAction::triggered, [this, username]() {
+            client_->muteUser(username);
+        });
+
+        QAction* unmuteAction = menu.addAction(tr("Unmute (Bỏ cấm chat)"));
+        connect(unmuteAction, &QAction::triggered, [this, username]() {
+            client_->unmuteUser(username);
+        });
+    }
+
+    menu.exec(userList_->mapToGlobal(pos));
+}
+
+void MainWindow::showAdminPanel() {
+    // Can be expanded later for a full admin panel dialog
 }

@@ -125,6 +125,51 @@ void ClientSession::handleMessage(const Protocol::Message& msg) {
             sendMessage(Protocol::Message(Protocol::MessageType::PONG));
             break;
 
+        // Admin commands
+        case Protocol::MessageType::KICK_USER:
+            handleKickUser(msg);
+            break;
+
+        case Protocol::MessageType::BAN_USER:
+            handleBanUser(msg);
+            break;
+
+        case Protocol::MessageType::UNBAN_USER:
+            handleUnbanUser(msg);
+            break;
+
+        case Protocol::MessageType::MUTE_USER:
+            handleMuteUser(msg);
+            break;
+
+        case Protocol::MessageType::UNMUTE_USER:
+            handleUnmuteUser(msg);
+            break;
+
+        case Protocol::MessageType::PROMOTE_USER:
+            handlePromoteUser(msg);
+            break;
+
+        case Protocol::MessageType::DEMOTE_USER:
+            handleDemoteUser(msg);
+            break;
+
+        case Protocol::MessageType::GET_ALL_USERS:
+            handleGetAllUsers(msg);
+            break;
+
+        case Protocol::MessageType::GET_BANNED_LIST:
+            handleGetBannedList(msg);
+            break;
+
+        case Protocol::MessageType::GET_MUTED_LIST:
+            handleGetMutedList(msg);
+            break;
+
+        case Protocol::MessageType::USER_INFO:
+            handleUserInfo(msg);
+            break;
+
         default:
             sendMessage(Protocol::createErrorResponse("Unknown command"));
             break;
@@ -183,6 +228,12 @@ void ClientSession::handleLogin(const Protocol::Message& msg) {
             return;
         }
 
+        // Check if user is banned
+        if (Database::getInstance().isBanned(username)) {
+            sendMessage(Protocol::createErrorResponse("Your account has been banned"));
+            return;
+        }
+
         // Authenticate
         if (Database::getInstance().authenticateUser(username, password)) {
             std::string displayName = Database::getInstance().getDisplayName(username);
@@ -195,6 +246,8 @@ void ClientSession::handleLogin(const Protocol::Message& msg) {
             json response;
             response["username"] = username;
             response["displayName"] = displayName;
+            response["role"] = Database::getInstance().getUserRole(username);
+            response["isMuted"] = Database::getInstance().isMuted(username);
             sendMessage(Protocol::createOkResponse("Login successful", response.dump()));
 
             // Broadcast user online status to all clients
@@ -264,6 +317,13 @@ void ClientSession::handleGlobalMessage(const Protocol::Message& msg) {
     }
 
     std::string username = getUsername();
+
+    // Check if user is muted
+    if (Database::getInstance().isMuted(username)) {
+        sendMessage(Protocol::createErrorResponse("You are muted and cannot send messages"));
+        return;
+    }
+
     std::string content = msg.content;
 
     if (content.empty()) {
@@ -285,6 +345,13 @@ void ClientSession::handlePrivateMessage(const Protocol::Message& msg) {
     }
 
     std::string sender = getUsername();
+
+    // Check if user is muted
+    if (Database::getInstance().isMuted(sender)) {
+        sendMessage(Protocol::createErrorResponse("You are muted and cannot send messages"));
+        return;
+    }
+
     std::string receiver = msg.receiver;
     std::string content = msg.content;
 
@@ -316,4 +383,397 @@ void ClientSession::handlePrivateMessage(const Protocol::Message& msg) {
 
     // Also send copy to sender (for display)
     sendMessage(privateMsg);
+}
+
+// ========== Admin Commands ==========
+
+bool ClientSession::isAdmin() const {
+    std::string username = getUsername();
+    return Database::getInstance().isAdmin(username);
+}
+
+void ClientSession::handleKickUser(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::string targetUser = msg.receiver;
+    if (targetUser.empty()) {
+        sendMessage(Protocol::createErrorResponse("Target user not specified"));
+        return;
+    }
+
+    if (targetUser == getUsername()) {
+        sendMessage(Protocol::createErrorResponse("Cannot kick yourself"));
+        return;
+    }
+
+    // Check if target is online
+    if (!server_->isUserOnline(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User not online: " + targetUser));
+        return;
+    }
+
+    // Send kick notification to target
+    Protocol::Message kickMsg(Protocol::MessageType::KICKED);
+    kickMsg.content = "You have been kicked by " + getUsername();
+    server_->sendToUser(targetUser, kickMsg);
+
+    // Force disconnect
+    server_->kickUser(targetUser);
+
+    server_->log("User kicked: " + targetUser + " by " + getUsername());
+    sendMessage(Protocol::createOkResponse("User kicked: " + targetUser));
+
+    // Broadcast offline status
+    server_->broadcast(Protocol::createUserStatusMessage(targetUser, Protocol::UserStatus::OFFLINE));
+}
+
+void ClientSession::handleBanUser(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::string targetUser = msg.receiver;
+    if (targetUser.empty()) {
+        sendMessage(Protocol::createErrorResponse("Target user not specified"));
+        return;
+    }
+
+    if (targetUser == getUsername()) {
+        sendMessage(Protocol::createErrorResponse("Cannot ban yourself"));
+        return;
+    }
+
+    // Check if target is admin
+    if (Database::getInstance().isAdmin(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("Cannot ban an admin"));
+        return;
+    }
+
+    if (!Database::getInstance().userExists(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User not found: " + targetUser));
+        return;
+    }
+
+    if (Database::getInstance().banUser(targetUser)) {
+        server_->log("User banned: " + targetUser + " by " + getUsername());
+
+        // If user is online, kick them
+        if (server_->isUserOnline(targetUser)) {
+            Protocol::Message banMsg(Protocol::MessageType::BANNED);
+            banMsg.content = "You have been banned by " + getUsername();
+            server_->sendToUser(targetUser, banMsg);
+            server_->kickUser(targetUser);
+            server_->broadcast(Protocol::createUserStatusMessage(targetUser, Protocol::UserStatus::OFFLINE));
+        }
+
+        sendMessage(Protocol::createOkResponse("User banned: " + targetUser));
+    } else {
+        sendMessage(Protocol::createErrorResponse("Failed to ban user"));
+    }
+}
+
+void ClientSession::handleUnbanUser(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::string targetUser = msg.receiver;
+    if (targetUser.empty()) {
+        sendMessage(Protocol::createErrorResponse("Target user not specified"));
+        return;
+    }
+
+    if (!Database::getInstance().userExists(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User not found: " + targetUser));
+        return;
+    }
+
+    if (Database::getInstance().unbanUser(targetUser)) {
+        server_->log("User unbanned: " + targetUser + " by " + getUsername());
+        sendMessage(Protocol::createOkResponse("User unbanned: " + targetUser));
+    } else {
+        sendMessage(Protocol::createErrorResponse("Failed to unban user"));
+    }
+}
+
+void ClientSession::handleMuteUser(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::string targetUser = msg.receiver;
+    if (targetUser.empty()) {
+        sendMessage(Protocol::createErrorResponse("Target user not specified"));
+        return;
+    }
+
+    if (targetUser == getUsername()) {
+        sendMessage(Protocol::createErrorResponse("Cannot mute yourself"));
+        return;
+    }
+
+    if (Database::getInstance().isAdmin(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("Cannot mute an admin"));
+        return;
+    }
+
+    if (!Database::getInstance().userExists(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User not found: " + targetUser));
+        return;
+    }
+
+    if (Database::getInstance().muteUser(targetUser)) {
+        server_->log("User muted: " + targetUser + " by " + getUsername());
+
+        // Notify the muted user if online
+        if (server_->isUserOnline(targetUser)) {
+            Protocol::Message muteMsg(Protocol::MessageType::MUTED);
+            muteMsg.content = "You have been muted by " + getUsername();
+            server_->sendToUser(targetUser, muteMsg);
+        }
+
+        sendMessage(Protocol::createOkResponse("User muted: " + targetUser));
+    } else {
+        sendMessage(Protocol::createErrorResponse("Failed to mute user"));
+    }
+}
+
+void ClientSession::handleUnmuteUser(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::string targetUser = msg.receiver;
+    if (targetUser.empty()) {
+        sendMessage(Protocol::createErrorResponse("Target user not specified"));
+        return;
+    }
+
+    if (!Database::getInstance().userExists(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User not found: " + targetUser));
+        return;
+    }
+
+    if (Database::getInstance().unmuteUser(targetUser)) {
+        server_->log("User unmuted: " + targetUser + " by " + getUsername());
+
+        // Notify the unmuted user if online
+        if (server_->isUserOnline(targetUser)) {
+            Protocol::Message unmuteMsg(Protocol::MessageType::UNMUTED);
+            unmuteMsg.content = "You have been unmuted by " + getUsername();
+            server_->sendToUser(targetUser, unmuteMsg);
+        }
+
+        sendMessage(Protocol::createOkResponse("User unmuted: " + targetUser));
+    } else {
+        sendMessage(Protocol::createErrorResponse("Failed to unmute user"));
+    }
+}
+
+void ClientSession::handlePromoteUser(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::string targetUser = msg.receiver;
+    if (targetUser.empty()) {
+        sendMessage(Protocol::createErrorResponse("Target user not specified"));
+        return;
+    }
+
+    if (!Database::getInstance().userExists(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User not found: " + targetUser));
+        return;
+    }
+
+    if (Database::getInstance().isAdmin(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User is already an admin"));
+        return;
+    }
+
+    if (Database::getInstance().setUserRole(targetUser, 1)) {
+        server_->log("User promoted to admin: " + targetUser + " by " + getUsername());
+        sendMessage(Protocol::createOkResponse("User promoted to admin: " + targetUser));
+    } else {
+        sendMessage(Protocol::createErrorResponse("Failed to promote user"));
+    }
+}
+
+void ClientSession::handleDemoteUser(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::string targetUser = msg.receiver;
+    if (targetUser.empty()) {
+        sendMessage(Protocol::createErrorResponse("Target user not specified"));
+        return;
+    }
+
+    if (targetUser == getUsername()) {
+        sendMessage(Protocol::createErrorResponse("Cannot demote yourself"));
+        return;
+    }
+
+    if (!Database::getInstance().userExists(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User not found: " + targetUser));
+        return;
+    }
+
+    if (!Database::getInstance().isAdmin(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User is not an admin"));
+        return;
+    }
+
+    if (Database::getInstance().setUserRole(targetUser, 0)) {
+        server_->log("User demoted from admin: " + targetUser + " by " + getUsername());
+        sendMessage(Protocol::createOkResponse("User demoted from admin: " + targetUser));
+    } else {
+        sendMessage(Protocol::createErrorResponse("Failed to demote user"));
+    }
+}
+
+void ClientSession::handleGetAllUsers(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::vector<UserInfo> users = Database::getInstance().getAllUsers();
+
+    json j = json::array();
+    for (const auto& user : users) {
+        json userJson;
+        userJson["username"] = user.username;
+        userJson["displayName"] = user.displayName;
+        userJson["role"] = user.role;
+        userJson["isBanned"] = user.isBanned;
+        userJson["isMuted"] = user.isMuted;
+        userJson["createdAt"] = user.createdAt;
+        userJson["isOnline"] = server_->isUserOnline(user.username);
+        j.push_back(userJson);
+    }
+
+    Protocol::Message response(Protocol::MessageType::GET_ALL_USERS);
+    response.extra = j.dump();
+    sendMessage(response);
+}
+
+void ClientSession::handleGetBannedList(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::vector<std::string> bannedUsers = Database::getInstance().getBannedUsers();
+
+    json j = bannedUsers;
+    Protocol::Message response(Protocol::MessageType::GET_BANNED_LIST);
+    response.extra = j.dump();
+    sendMessage(response);
+}
+
+void ClientSession::handleGetMutedList(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    if (!isAdmin()) {
+        sendMessage(Protocol::createErrorResponse("Admin privileges required"));
+        return;
+    }
+
+    std::vector<std::string> mutedUsers = Database::getInstance().getMutedUsers();
+
+    json j = mutedUsers;
+    Protocol::Message response(Protocol::MessageType::GET_MUTED_LIST);
+    response.extra = j.dump();
+    sendMessage(response);
+}
+
+void ClientSession::handleUserInfo(const Protocol::Message& msg) {
+    if (!authenticated_) {
+        sendMessage(Protocol::createErrorResponse("Must be logged in"));
+        return;
+    }
+
+    std::string targetUser = msg.receiver;
+    if (targetUser.empty()) {
+        targetUser = getUsername();  // Get own info
+    }
+
+    if (!Database::getInstance().userExists(targetUser)) {
+        sendMessage(Protocol::createErrorResponse("User not found: " + targetUser));
+        return;
+    }
+
+    UserInfo info = Database::getInstance().getUserInfo(targetUser);
+
+    json j;
+    j["username"] = info.username;
+    j["displayName"] = info.displayName;
+    j["role"] = info.role;
+    j["isBanned"] = info.isBanned;
+    j["isMuted"] = info.isMuted;
+    j["createdAt"] = info.createdAt;
+    j["isOnline"] = server_->isUserOnline(info.username);
+
+    Protocol::Message response(Protocol::MessageType::USER_INFO);
+    response.extra = j.dump();
+    sendMessage(response);
 }

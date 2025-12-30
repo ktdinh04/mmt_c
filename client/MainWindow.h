@@ -105,6 +105,16 @@ private slots:
     void onSendGlobalMessage(const QString& content);
     void onSendPrivateMessage(const QString& recipient, const QString& content);
 
+    // Admin
+    void onKicked(const QString& reason);
+    void onBanned(const QString& reason);
+    void onMuted(const QString& reason);
+    void onUnmuted(const QString& reason);
+    void onAdminActionSuccess(const QString& message);
+    void onAdminActionFailed(const QString& error);
+    void onUserListContextMenu(const QPoint& pos);
+    void showAdminPanel();
+
 private:
     void setupUI();
     void setupMenuBar();

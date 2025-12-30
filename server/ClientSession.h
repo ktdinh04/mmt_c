@@ -147,6 +147,68 @@ private:
      */
     void handlePrivateMessage(const Protocol::Message& msg);
 
+    // ========== Admin Commands ==========
+
+    /**
+     * @brief Handle KICK_USER request (admin only)
+     */
+    void handleKickUser(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle BAN_USER request (admin only)
+     */
+    void handleBanUser(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle UNBAN_USER request (admin only)
+     */
+    void handleUnbanUser(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle MUTE_USER request (admin only)
+     */
+    void handleMuteUser(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle UNMUTE_USER request (admin only)
+     */
+    void handleUnmuteUser(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle PROMOTE_USER request (admin only)
+     */
+    void handlePromoteUser(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle DEMOTE_USER request (admin only)
+     */
+    void handleDemoteUser(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle GET_ALL_USERS request (admin only)
+     */
+    void handleGetAllUsers(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle GET_BANNED_LIST request (admin only)
+     */
+    void handleGetBannedList(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle GET_MUTED_LIST request (admin only)
+     */
+    void handleGetMutedList(const Protocol::Message& msg);
+
+    /**
+     * @brief Handle USER_INFO request
+     */
+    void handleUserInfo(const Protocol::Message& msg);
+
+    /**
+     * @brief Check if current user is admin
+     */
+    bool isAdmin() const;
+
     int socketFd_;
     Server* server_;
     std::string username_;

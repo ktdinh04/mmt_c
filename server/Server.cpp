@@ -325,6 +325,28 @@ void Server::unregisterUser(const std::string& username) {
     userToSocket_.erase(username);
 }
 
+void Server::kickUser(const std::string& username) {
+    int socketFd = -1;
+
+    {
+        std::lock_guard<std::mutex> lock(userMapMutex_);
+        auto it = userToSocket_.find(username);
+        if (it != userToSocket_.end()) {
+            socketFd = it->second;
+            userToSocket_.erase(it);
+        }
+    }
+
+    if (socketFd >= 0) {
+        std::lock_guard<std::mutex> lock(clientsMutex_);
+        auto it = clients_.find(socketFd);
+        if (it != clients_.end()) {
+            it->second->setInactive();
+            it->second->clearAuthentication();
+        }
+    }
+}
+
 void Server::broadcastOnlineList() {
     Protocol::Message msg = Protocol::createOnlineListMessage(getOnlineUsers());
     broadcast(msg);

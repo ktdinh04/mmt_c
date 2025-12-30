@@ -63,6 +63,9 @@ bool Database::createTables() {
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             display_name TEXT,
+            role INTEGER DEFAULT 0,
+            is_banned INTEGER DEFAULT 0,
+            is_muted INTEGER DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
@@ -77,6 +80,32 @@ bool Database::createTables() {
         std::cerr << "[Database] SQL error: " << errMsg << std::endl;
         sqlite3_free(errMsg);
         return false;
+    }
+
+    // Add new columns if they don't exist (for migration from old schema)
+    const char* migrations[] = {
+        "ALTER TABLE users ADD COLUMN role INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN is_muted INTEGER DEFAULT 0"
+    };
+
+    for (const char* migration : migrations) {
+        sqlite3_exec(db_, migration, nullptr, nullptr, nullptr);
+        // Ignore errors (column may already exist)
+    }
+
+    // Create first admin if no admin exists
+    const char* checkAdmin = "SELECT COUNT(*) FROM users WHERE role = 1";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_, checkAdmin, -1, &stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == 0) {
+            // No admin exists, make first user admin if exists
+            sqlite3_finalize(stmt);
+            const char* makeAdmin = "UPDATE users SET role = 1 WHERE id = (SELECT MIN(id) FROM users)";
+            sqlite3_exec(db_, makeAdmin, nullptr, nullptr, nullptr);
+        } else {
+            sqlite3_finalize(stmt);
+        }
     }
 
     return true;
@@ -283,4 +312,342 @@ bool Database::updateDisplayName(const std::string& username, const std::string&
     }
 
     return success;
+}
+
+// ========== Role Management ==========
+
+int Database::getUserRole(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_ || !db_) {
+        return -1;
+    }
+
+    const char* sql = "SELECT role FROM users WHERE username = ?";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    int role = -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        role = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return role;
+}
+
+bool Database::isAdmin(const std::string& username) {
+    return getUserRole(username) == 1;
+}
+
+bool Database::setUserRole(const std::string& username, int role) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_ || !db_) {
+        return false;
+    }
+
+    const char* sql = "UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, role);
+    sqlite3_bind_text(stmt, 2, username.c_str(), -1, SQLITE_STATIC);
+
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE) && (sqlite3_changes(db_) > 0);
+    sqlite3_finalize(stmt);
+
+    if (success) {
+        std::cout << "[Database] Role updated for " << username << " to " << role << std::endl;
+    }
+
+    return success;
+}
+
+// ========== Ban Management ==========
+
+bool Database::banUser(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_ || !db_) {
+        return false;
+    }
+
+    const char* sql = "UPDATE users SET is_banned = 1, updated_at = CURRENT_TIMESTAMP WHERE username = ?";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE) && (sqlite3_changes(db_) > 0);
+    sqlite3_finalize(stmt);
+
+    if (success) {
+        std::cout << "[Database] User banned: " << username << std::endl;
+    }
+
+    return success;
+}
+
+bool Database::unbanUser(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_ || !db_) {
+        return false;
+    }
+
+    const char* sql = "UPDATE users SET is_banned = 0, updated_at = CURRENT_TIMESTAMP WHERE username = ?";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE) && (sqlite3_changes(db_) > 0);
+    sqlite3_finalize(stmt);
+
+    if (success) {
+        std::cout << "[Database] User unbanned: " << username << std::endl;
+    }
+
+    return success;
+}
+
+bool Database::isBanned(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_ || !db_) {
+        return false;
+    }
+
+    const char* sql = "SELECT is_banned FROM users WHERE username = ?";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    bool banned = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        banned = sqlite3_column_int(stmt, 0) != 0;
+    }
+
+    sqlite3_finalize(stmt);
+    return banned;
+}
+
+std::vector<std::string> Database::getBannedUsers() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> users;
+
+    if (!initialized_ || !db_) {
+        return users;
+    }
+
+    const char* sql = "SELECT username FROM users WHERE is_banned = 1";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return users;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* username = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        if (username) {
+            users.push_back(username);
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    return users;
+}
+
+// ========== Mute Management ==========
+
+bool Database::muteUser(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_ || !db_) {
+        return false;
+    }
+
+    const char* sql = "UPDATE users SET is_muted = 1, updated_at = CURRENT_TIMESTAMP WHERE username = ?";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE) && (sqlite3_changes(db_) > 0);
+    sqlite3_finalize(stmt);
+
+    if (success) {
+        std::cout << "[Database] User muted: " << username << std::endl;
+    }
+
+    return success;
+}
+
+bool Database::unmuteUser(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_ || !db_) {
+        return false;
+    }
+
+    const char* sql = "UPDATE users SET is_muted = 0, updated_at = CURRENT_TIMESTAMP WHERE username = ?";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE) && (sqlite3_changes(db_) > 0);
+    sqlite3_finalize(stmt);
+
+    if (success) {
+        std::cout << "[Database] User unmuted: " << username << std::endl;
+    }
+
+    return success;
+}
+
+bool Database::isMuted(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!initialized_ || !db_) {
+        return false;
+    }
+
+    const char* sql = "SELECT is_muted FROM users WHERE username = ?";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    bool muted = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        muted = sqlite3_column_int(stmt, 0) != 0;
+    }
+
+    sqlite3_finalize(stmt);
+    return muted;
+}
+
+std::vector<std::string> Database::getMutedUsers() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> users;
+
+    if (!initialized_ || !db_) {
+        return users;
+    }
+
+    const char* sql = "SELECT username FROM users WHERE is_muted = 1";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return users;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* username = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        if (username) {
+            users.push_back(username);
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    return users;
+}
+
+// ========== User Info ==========
+
+UserInfo Database::getUserInfo(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    UserInfo info;
+    info.username = username;
+
+    if (!initialized_ || !db_) {
+        return info;
+    }
+
+    const char* sql = "SELECT display_name, role, is_banned, is_muted, created_at FROM users WHERE username = ?";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return info;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* displayName = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        info.displayName = displayName ? displayName : username;
+        info.role = sqlite3_column_int(stmt, 1);
+        info.isBanned = sqlite3_column_int(stmt, 2) != 0;
+        info.isMuted = sqlite3_column_int(stmt, 3) != 0;
+        const char* createdAt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        info.createdAt = createdAt ? createdAt : "";
+    }
+
+    sqlite3_finalize(stmt);
+    return info;
+}
+
+std::vector<UserInfo> Database::getAllUsers() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<UserInfo> users;
+
+    if (!initialized_ || !db_) {
+        return users;
+    }
+
+    const char* sql = "SELECT username, display_name, role, is_banned, is_muted, created_at FROM users ORDER BY username";
+    sqlite3_stmt* stmt;
+
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return users;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        UserInfo info;
+        const char* username = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const char* displayName = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+
+        info.username = username ? username : "";
+        info.displayName = displayName ? displayName : info.username;
+        info.role = sqlite3_column_int(stmt, 2);
+        info.isBanned = sqlite3_column_int(stmt, 3) != 0;
+        info.isMuted = sqlite3_column_int(stmt, 4) != 0;
+
+        const char* createdAt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+        info.createdAt = createdAt ? createdAt : "";
+
+        users.push_back(info);
+    }
+
+    sqlite3_finalize(stmt);
+    return users;
 }
